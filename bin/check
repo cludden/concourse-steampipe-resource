@@ -1,0 +1,5 @@
+#!/bin/bash
+
+cd /home/steampipe
+
+cat <&0 | su steampipe --command "/opt/resource/realcheck"
