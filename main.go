@@ -257,13 +257,22 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 		}
 
 		// if no diff detected, return early
-		diff, _ := jsondiff.Compare(orig, nextb, &jsondiff.Options{})
+		diff, msg := jsondiff.Compare(orig, nextb, &jsondiff.Options{})
 		switch diff {
 		case jsondiff.BothArgsAreInvalidJson, jsondiff.FirstArgIsInvalidJson, jsondiff.SecondArgIsInvalidJson:
 			return nil, fmt.Errorf("error diffing versions: %s", diff.String())
+		case jsondiff.NoMatch, jsondiff.SupersetMatch:
+			if s.Debug {
+				color.Yellow("diff detected (%s): %s", diff.String(), msg)
+			}
 		case jsondiff.FullMatch:
 			return versions, nil
 		}
+	}
+
+	if s.Debug {
+		b, _ := next.MarshalJSON()
+		color.Yellow("emitting new version: %s", string(b))
 	}
 
 	// otherwise, append new version

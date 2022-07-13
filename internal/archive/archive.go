@@ -3,9 +3,12 @@ package archive
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -66,9 +69,12 @@ type (
 	}
 
 	S3 struct {
-		cfg    *S3Config
-		client *s3.Client
-		debug  bool
+		cfg     *S3Config
+		client  *s3.Client
+		debug   bool
+		sums    map[string]struct{}
+		fetched bool
+		m       sync.Mutex
 	}
 )
 
@@ -89,26 +95,68 @@ func NewS3(ctx context.Context, cfg *S3Config, debug bool) (*S3, error) {
 		cfg:    cfg,
 		client: s3.NewFromConfig(sess),
 		debug:  debug,
+		sums:   make(map[string]struct{}),
+		m:      sync.Mutex{},
 	}, nil
 }
 
 func (a *S3) History(ctx context.Context) (versions [][]byte, err error) {
+	a.m.Lock()
+	defer a.m.Unlock()
+	return a.history(ctx)
+}
+
+func (a *S3) Put(ctx context.Context, v interface{}) error {
+	a.m.Lock()
+	defer a.m.Unlock()
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("error serializing version json: %v", err)
+	}
+
+	// fetch recent history
+	if !a.fetched {
+		a.cfg.MaxVersions = 100
+		_, err := a.history(ctx)
+		if err != nil {
+			return fmt.Errorf("error fetching history: %v", err)
+		}
+	}
+
+	sumb := md5.Sum(b)
+	sum := hex.EncodeToString(sumb[:])
+	if _, ok := a.sums[sum]; ok {
+		a.log("skipping archival of existing version: %s", sum)
+	}
+
+	params := &s3.PutObjectInput{
+		Bucket: &a.cfg.Bucket,
+		Key:    &a.cfg.Key,
+		Body:   bytes.NewReader(b),
+	}
+
+	_, err = a.client.PutObject(ctx, params)
+	return err
+}
+
+func (a *S3) history(ctx context.Context) (versions [][]byte, err error) {
 	var n int
 
 	params := &s3.ListObjectVersionsInput{
 		Bucket: &a.cfg.Bucket,
 		Prefix: &a.cfg.Key,
 	}
+	if max := a.cfg.MaxVersions; max > 0 && max < 1000 {
+		params.MaxKeys = int32(max)
+	}
 
 	for {
 		// retrieve a batch of object versions
+		a.log("retrieving batch of archived versions...")
 		page, err := a.client.ListObjectVersions(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("error listing object versions: %v", err)
-		}
-
-		if a.debug {
-			color.Yellow("retrieving batch of archived versions: %v", page)
 		}
 
 		var lastKey, lastVersionID string
@@ -125,28 +173,31 @@ func (a *S3) History(ctx context.Context) (versions [][]byte, err error) {
 				return nil, err
 			}
 
-			if a.debug {
-				color.Yellow("adding archived version to history: %s", string(body))
+			sumb := md5.Sum(body)
+			sum := hex.EncodeToString(sumb[:])
+			if _, ok := a.sums[sum]; ok {
+				a.log("ignoring version with previously seen sum: %s", sum)
+				continue
 			}
 
+			a.log("adding archived version to history: %s", string(body))
 			versions, n = append(versions, body), n+1
+			a.sums[sum] = struct{}{}
 
 			// return early if we've
 			if max := a.cfg.MaxVersions; max > 0 && n >= max {
-				if a.debug {
-					color.Yellow("truncating archive history: max version limit %d reached", max)
-				}
+				a.log("truncating archive history: max version limit %d reached", max)
 				a.reverse(versions)
+				a.fetched = true
 				return versions, nil
 			}
 		}
 
 		// return if last page
 		if !page.IsTruncated || len(page.Versions) == 0 {
-			if a.debug {
-				color.Yellow("reached end of archive history")
-			}
+			a.log("reached end of archive history")
 			a.reverse(versions)
+			a.fetched = true
 			return versions, nil
 		}
 
@@ -158,20 +209,10 @@ func (a *S3) History(ctx context.Context) (versions [][]byte, err error) {
 	}
 }
 
-func (a *S3) Put(ctx context.Context, v interface{}) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("error serializing version json: %v", err)
+func (a *S3) log(format string, args ...interface{}) {
+	if a.debug {
+		color.Yellow(format, args...)
 	}
-
-	params := &s3.PutObjectInput{
-		Bucket: &a.cfg.Bucket,
-		Key:    &a.cfg.Key,
-		Body:   bytes.NewReader(b),
-	}
-
-	_, err = a.client.PutObject(ctx, params)
-	return err
 }
 
 func (a *S3) downloadObjectVersion(ctx context.Context, v *types.ObjectVersion) ([]byte, error) {
