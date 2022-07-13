@@ -15,6 +15,7 @@ import (
 	sdk "github.com/cludden/concourse-go-sdk"
 	"github.com/fatih/color"
 	"github.com/go-playground/validator/v10"
+	"github.com/hashicorp/concourse-steampipe-resource/internal/archive"
 	"github.com/nsf/jsondiff"
 	"github.com/tidwall/gjson"
 )
@@ -34,6 +35,7 @@ const (
 type (
 	// Source describes resource configuration
 	Source struct {
+		Archive        *archive.Config   `json:"archive" validate:"omitempty,dive"`
 		Config         string            `json:"config" validate:"required"`
 		Files          map[string]string `json:"files"`
 		Debug          bool              `json:"debug"`
@@ -73,18 +75,51 @@ func (v *Version) UnmarshalJSON(b []byte) error {
 
 // Resource implements a steampipe concourse resource
 type Resource struct {
+	archive archive.Archive
 }
 
 // Initialize configures shared resources
-func (r *Resource) Initialize(ctx context.Context, s *Source) error {
+func (r *Resource) Initialize(ctx context.Context, s *Source) (err error) {
 	color.NoColor = false
 	color.Output = sdk.StdErrFromContext(ctx)
+
+	archiveCfg := s.Archive
+	if archiveCfg == nil {
+		archiveCfg = &archive.Config{}
+	}
+
+	if s.Debug {
+		archiveCfg.Debug = true
+	}
+
+	r.archive, err = archive.New(ctx, archiveCfg)
+	if err != nil {
+		return fmt.Errorf("error initializing archive: %v", err)
+	}
 
 	return nil
 }
 
 // Check for new versions
 func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions []Version, err error) {
+	// build version history as best effort
+	if v != nil {
+		versions = append(versions, *v)
+	} else {
+		history, err := r.archive.History(ctx)
+		if err != nil {
+			color.Red("error retrieving resource history: %v", err)
+		}
+
+		for _, item := range history {
+			artifact := Version{Data: make(map[string]interface{})}
+			if err := json.Unmarshal(item, &artifact.Data); err != nil {
+				return nil, fmt.Errorf("error unmarshalling historic version: %v", err)
+			}
+			versions = append(versions, artifact)
+		}
+	}
+
 	// write steampipe config file
 	if err := ioutil.WriteFile(path.Join(configdir, "check.spc"), []byte(s.Config), 0777); err != nil {
 		return nil, fmt.Errorf("error writing configuration: %v", err)
@@ -117,22 +152,22 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 	}
 
 	// parse version_mapping if provided
-	var e *bloblang.Executor
+	var mapping *bloblang.Executor
 	if s.VersionMapping != "" {
-		e, err = bloblang.Parse(s.VersionMapping)
+		mapping, err = bloblang.Parse(s.VersionMapping)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing version_mapping: %v", err)
 		}
 	}
 
+	// define steampipe environment variables
 	envs := append(os.Environ(), "HOME=/home/steampipe")
 	if s.Debug {
 		envs = append(envs, "STEAMPIPE_LOG_LEVEL=TRACE")
 	}
 
-	// configure output streams
+	// configure steampipe command
 	var outb, errb bytes.Buffer
-
 	cmd := exec.Command("steampipe", "query", "--output=json", s.Query)
 	cmd.Env = envs
 	cmd.Stdout = &outb
@@ -154,11 +189,6 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 		return nil, fmt.Errorf("error executing query: %v", err)
 	}
 
-	// add existing version as first element if provided
-	if v != nil {
-		versions = append(versions, *v)
-	}
-
 	// parse query results
 	result := gjson.ParseBytes(outb.Bytes())
 	if result.Type == gjson.Null {
@@ -166,31 +196,9 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 		return versions, nil
 	}
 
-	// process results as new version
-	if e == nil {
-		// extract first row
-		if result.IsArray() {
-			result = result.Get("0")
-		}
-
-		next := Version{Data: make(map[string]interface{})}
-		if err := json.Unmarshal([]byte(result.Raw), &next.Data); err != nil {
-			return nil, fmt.Errorf("error unmarshalling result: %v", err)
-		}
-
-		// if previous version provided, compare against current result
-		if v != nil {
-			orig, err := v.MarshalJSON()
-			if err != nil {
-				return nil, fmt.Errorf("error serializing previous version")
-			}
-			if diff, _ := jsondiff.Compare(orig, []byte(result.Raw), &jsondiff.Options{}); diff == jsondiff.NoMatch || diff == jsondiff.SupersetMatch {
-				versions = append(versions, next)
-			}
-		} else {
-			versions = append(versions, next)
-		}
-	} else {
+	// extract version data from parsed query results
+	var data map[string]interface{}
+	if mapping != nil {
 		// generate mapping input that includes full results as top-level "after" field
 		input := map[string]interface{}{
 			"after": result.Value(),
@@ -204,20 +212,64 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 			color.Yellow("mapping input:\n" + string(b))
 		}
 
-		// execute version_mapping
-		out, err := e.Query(input)
+		// execute version mapping
+		out, err := mapping.Query(input)
 		if err != nil && err != bloblang.ErrRootDeleted {
 			return nil, fmt.Errorf("error executing version_mapping: %v", err)
 		}
 
-		// if mapping is result is not empty, append as new version
+		// if mapping result is not empty, rough parse result
 		if out != nil {
-			data, ok := out.(map[string]interface{})
+			structured, ok := out.(map[string]interface{})
 			if !ok {
 				return nil, fmt.Errorf("invalid version_mapping result: expected map[string]interface{}, got %T", out)
 			}
-			versions = append(versions, Version{Data: data})
+			data = structured
 		}
+	} else {
+		// extract first row
+		if result.IsArray() {
+			result = result.Get("0")
+		}
+
+		// parse row json as version data
+		data = make(map[string]interface{})
+		if err := json.Unmarshal([]byte(result.Raw), &data); err != nil {
+			return nil, fmt.Errorf("error unmarshalling result: %v", err)
+		}
+	}
+
+	// if no new version detected, return early
+	if data == nil {
+		return versions, nil
+	}
+
+	// if previous version provided, compare against current result
+	next := Version{data}
+	if v != nil {
+		orig, err := v.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("error serializing previous version: %v", err)
+		}
+		nextb, err := next.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("error serializing next version: %v", err)
+		}
+
+		// if no diff detected, return early
+		diff, _ := jsondiff.Compare(orig, nextb, &jsondiff.Options{})
+		switch diff {
+		case jsondiff.BothArgsAreInvalidJson, jsondiff.FirstArgIsInvalidJson, jsondiff.SecondArgIsInvalidJson:
+			return nil, fmt.Errorf("error diffing versions: %s", diff.String())
+		case jsondiff.FullMatch:
+			return versions, nil
+		}
+	}
+
+	// otherwise, append new version
+	versions = append(versions, next)
+	if err := r.archive.Put(ctx, &next); err != nil {
+		color.Red("error recording new version in archive: %v", err)
 	}
 
 	return versions, nil

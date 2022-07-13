@@ -81,6 +81,13 @@ jobs:
 **Parameters:**
 | Parameter | Type | Description | Required |
 | :--- | :---: | :--- | :---: |
+| archive.type | `string` | archive type, one of `empty`, `s3`, defaults to `empty` | |
+| archive.s3.bucket | `string` | s3 archive bucket name, requires s3 bucket versioning to be enabled | ✓ |
+| archive.s3.key | `string` | s3 archive key name, should be unique to the resource | ✓ |
+| archive.s3.region | `string` | s3 archive bucket region | ✓ |
+| archive.s3.credentials.access_key | `string` | aws access key id | |
+| archive.s3.credentials.secret_key | `string` | aws secret access key | |
+| archive.s3.credentials.session_token | `string` | aws session token | |
 | config | `string` | Steampipe configuration | ✓ |
 | debug | `bool` | enable debug logging | |
 | files | `map[string]string` | map of additional files to write prior to invoking steampipe, can be used for configuring plugins that rely on canonical configuration files (e.g. `aws`) | |
@@ -100,6 +107,9 @@ Writes the JSON serialized version to the filesystem
 
 ### `out`
 Not implemented, will error if invoked via `put` step
+
+## Archiving
+Concourse resources that leverage credentials in their resource config are at risk of losing version history if/when those credentials change/rotate. Due to the fact that versions emitted by this resource are synthetic, and in order to prevent orphaned versions in the event that credentials are rotated, this resource supports arhiving its version history to prevent history loss in these specific situations.
 
 ## License
 **UNLICENSED**

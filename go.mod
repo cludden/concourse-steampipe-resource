@@ -3,6 +3,9 @@ module github.com/hashicorp/concourse-steampipe-resource
 go 1.18
 
 require (
+	github.com/aws/aws-sdk-go-v2/config v1.13.1
+	github.com/aws/aws-sdk-go-v2/credentials v1.8.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.24.1
 	github.com/benthosdev/benthos/v4 v4.3.0
 	github.com/cludden/concourse-go-sdk v0.2.0
 	github.com/fatih/color v1.13.0
@@ -15,6 +18,18 @@ require (
 	cloud.google.com/go/iam v0.3.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.6.1 // indirect
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.15.0 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.0 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.10.0 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.4 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.2.0 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.11.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.9.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.14.0 // indirect
+	github.com/aws/smithy-go v1.11.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.1.3 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
