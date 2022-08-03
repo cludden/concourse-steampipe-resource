@@ -35,7 +35,7 @@ RUN steampipe service stop
 # remove the generated service .passwd file from this image, so that it gets regenerated in the container
 RUN rm -f /home/steampipe/.steampipe/internal/.passwd
 
-RUN steampipe plugin install aws code config net
+RUN steampipe plugin install aws code config datadog net
 
 RUN rm -rf /home/steampipe/.steampipe/config/*.spc
 
