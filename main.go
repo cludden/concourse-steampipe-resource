@@ -13,9 +13,9 @@ import (
 
 	"github.com/benthosdev/benthos/v4/public/bloblang"
 	sdk "github.com/cludden/concourse-go-sdk"
+	"github.com/cludden/concourse-go-sdk/pkg/archive"
 	"github.com/fatih/color"
 	"github.com/go-playground/validator/v10"
-	"github.com/hashicorp/concourse-steampipe-resource/internal/archive"
 	"github.com/nsf/jsondiff"
 	"github.com/tidwall/gjson"
 )
@@ -74,50 +74,28 @@ func (v *Version) UnmarshalJSON(b []byte) error {
 // =============================================================================
 
 // Resource implements a steampipe concourse resource
-type Resource struct {
-	archive archive.Archive
+type Resource struct{}
+
+// Archive implements optional method to enable resource version archiving
+func (r *Resource) Archive(ctx context.Context, s *Source) (archive.Archive, error) {
+	if s != nil && s.Archive != nil {
+		return archive.New(ctx, *s.Archive)
+	}
+	return nil, nil
 }
 
 // Initialize configures shared resources
 func (r *Resource) Initialize(ctx context.Context, s *Source) (err error) {
 	color.NoColor = false
 	color.Output = sdk.StdErrFromContext(ctx)
-
-	archiveCfg := s.Archive
-	if archiveCfg == nil {
-		archiveCfg = &archive.Config{}
-	}
-
-	if s.Debug {
-		archiveCfg.Debug = true
-	}
-
-	r.archive, err = archive.New(ctx, archiveCfg)
-	if err != nil {
-		return fmt.Errorf("error initializing archive: %v", err)
-	}
-
 	return nil
 }
 
 // Check for new versions
 func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions []Version, err error) {
-	// build version history as best effort
+	// prepend latest version if provided
 	if v != nil {
 		versions = append(versions, *v)
-	} else {
-		history, err := r.archive.History(ctx)
-		if err != nil {
-			color.Red("error retrieving resource history: %v", err)
-		}
-
-		for _, item := range history {
-			artifact := Version{Data: make(map[string]interface{})}
-			if err := json.Unmarshal(item, &artifact.Data); err != nil {
-				return nil, fmt.Errorf("error unmarshalling historic version: %v", err)
-			}
-			versions = append(versions, artifact)
-		}
 	}
 
 	// write steampipe config file
@@ -277,9 +255,6 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 
 	// otherwise, append new version
 	versions = append(versions, next)
-	if err := r.archive.Put(ctx, &next); err != nil {
-		color.Red("error recording new version in archive: %v", err)
-	}
 
 	return versions, nil
 }
