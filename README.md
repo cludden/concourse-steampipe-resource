@@ -179,4 +179,5 @@ root = $images.fold({}, image -> image.tally.assign({
 ```
 
 ## License
-**UNLICENSED**
+Licensed under the [MIT-0 License](LICENSE.md)  
+Copyright (c) 2022 Chris Ludden
