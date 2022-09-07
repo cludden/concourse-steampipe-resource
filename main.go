@@ -13,9 +13,10 @@ import (
 
 	"github.com/benthosdev/benthos/v4/public/bloblang"
 	sdk "github.com/cludden/concourse-go-sdk"
+	"github.com/cludden/concourse-go-sdk/pkg/archive"
 	"github.com/fatih/color"
 	"github.com/go-playground/validator/v10"
-	"github.com/hashicorp/concourse-steampipe-resource/internal/archive"
+	oldarchive "github.com/hashicorp/concourse-steampipe-resource/internal/archive"
 	"github.com/nsf/jsondiff"
 	"github.com/tidwall/gjson"
 )
@@ -35,12 +36,13 @@ const (
 type (
 	// Source describes resource configuration
 	Source struct {
-		Archive        *archive.Config   `json:"archive" validate:"omitempty,dive"`
-		Config         string            `json:"config" validate:"required"`
-		Files          map[string]string `json:"files"`
-		Debug          bool              `json:"debug"`
-		Query          string            `json:"query" validate:"required"`
-		VersionMapping string            `json:"version_mapping"`
+		Archive        *oldarchive.Config `json:"archive" validate:"omitempty,dive"`
+		NewArchive     *archive.Config    `json:"new_archive" validate:"omitempty,dive"`
+		Config         string             `json:"config" validate:"required"`
+		Files          map[string]string  `json:"files"`
+		Debug          bool               `json:"debug"`
+		Query          string             `json:"query" validate:"required"`
+		VersionMapping string             `json:"version_mapping"`
 	}
 
 	// Version describes versions managed by a resource
@@ -75,7 +77,15 @@ func (v *Version) UnmarshalJSON(b []byte) error {
 
 // Resource implements a steampipe concourse resource
 type Resource struct {
-	archive archive.Archive
+	archive oldarchive.Archive
+}
+
+// Archive implements optional method to enable resource version archiving
+func (r *Resource) Archive(ctx context.Context, s *Source) (archive.Archive, error) {
+	if s != nil && s.NewArchive != nil {
+		return archive.New(ctx, *s.NewArchive)
+	}
+	return nil, nil
 }
 
 // Initialize configures shared resources
@@ -85,14 +95,14 @@ func (r *Resource) Initialize(ctx context.Context, s *Source) (err error) {
 
 	archiveCfg := s.Archive
 	if archiveCfg == nil {
-		archiveCfg = &archive.Config{}
+		archiveCfg = &oldarchive.Config{}
 	}
 
 	if s.Debug {
 		archiveCfg.Debug = true
 	}
 
-	r.archive, err = archive.New(ctx, archiveCfg)
+	r.archive, err = oldarchive.New(ctx, archiveCfg)
 	if err != nil {
 		return fmt.Errorf("error initializing archive: %v", err)
 	}
