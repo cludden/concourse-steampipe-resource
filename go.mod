@@ -10,7 +10,6 @@ require (
 	github.com/cludden/concourse-go-sdk v0.3.3
 	github.com/fatih/color v1.13.0
 	github.com/go-playground/validator/v10 v10.11.0
-	github.com/nsf/jsondiff v0.0.0-20210926074059-1e845ec5d249
 	github.com/tidwall/gjson v1.14.1
 )
 

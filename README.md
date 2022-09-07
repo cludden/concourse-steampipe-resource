@@ -9,8 +9,6 @@ resource_types:
     type: registry-image
     source:
       repository: ghcr.io/cludden/concourse-steampipe-resource
-      username: ((ghcr.username))
-      password: ((ghcr.password))
 
 resources:
   # configure steampipe resource that emits a version everytime the `foo` autoscaling 
@@ -65,13 +63,7 @@ jobs:
 **Parameters:**
 | Parameter | Type | Description | Required |
 | :--- | :---: | :--- | :---: |
-| [archive.type](#archiving) | `string` | archive type, one of `empty`, `s3`, defaults to `empty` | |
-| [archive.s3.bucket](#archiving) | `string` | s3 archive bucket name, requires s3 bucket versioning to be enabled | ✓ |
-| [archive.s3.key](#archiving) | `string` | s3 archive key name, should be unique to the resource | ✓ |
-| [archive.s3.region](#archiving) | `string` | s3 archive bucket region | ✓ |
-| [archive.s3.credentials.access_key](#archiving) | `string` | aws access key id | |
-| [archive.s3.credentials.secret_key](#archiving) | `string` | aws secret access key | |
-| [archive.s3.credentials.session_token](#archiving) | `string` | aws session token | |
+| archive | [*archive.Archive](https://pkg.go.dev/github.com/cludden/concourse-go-sdk@v0.3.1/pkg/archive#Config) | optional archive config that can be used to enable [resource version archiving](https://github.com/cludden/concourse-go-sdk#archiving) | |
 | config | `string` | Steampipe configuration | ✓ |
 | debug | `bool` | enable debug logging | |
 | files | `map[string]string` | map of additional files to write prior to invoking steampipe, can be used for configuring plugins that rely on canonical configuration files (e.g. `aws`) | |
@@ -92,8 +84,25 @@ Writes the JSON serialized version to the filesystem
 ### `out`
 Not implemented, will error if invoked via `put` step
 
-## Archiving
-Concourse resources that leverage credentials in their resource config are at risk of losing version history if/when those credentials change/rotate. Due to the fact that versions emitted by this resource are synthetic, and in order to prevent orphaned versions in the event that credentials are rotated, this resource supports archiving its version history to prevent loss of history in these specific situations.
+## Plugins
+The official image hosted at `ghcr.io/cludden/concourse-steampipe-resource` ships with the following Steampipe plugins installed:
+- `aws`
+- `code`
+- `config`
+- `datadog`
+- `net`
+
+To customize the installed plugins, build a derivative image.
+
+```dockerfile
+FROM ghcr.io/cludden/concourse-steampipe-resource
+
+# install plugins as steampipe user and remove default configs
+USER steampipe:0
+RUN steampipe plugin install foo bar baz ...
+RUN rm -rf /home/steampipe/.steampipe/config/*.spc
+USER root
+```
 
 ## Version Mapping
 By default, the versions emitted by this resource take the shape of the first row returned by the configured query.

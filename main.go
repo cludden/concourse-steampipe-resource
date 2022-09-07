@@ -16,8 +16,6 @@ import (
 	"github.com/cludden/concourse-go-sdk/pkg/archive"
 	"github.com/fatih/color"
 	"github.com/go-playground/validator/v10"
-	oldarchive "github.com/hashicorp/concourse-steampipe-resource/internal/archive"
-	"github.com/nsf/jsondiff"
 	"github.com/tidwall/gjson"
 )
 
@@ -36,13 +34,12 @@ const (
 type (
 	// Source describes resource configuration
 	Source struct {
-		Archive        *oldarchive.Config `json:"archive" validate:"omitempty,dive"`
-		NewArchive     *archive.Config    `json:"new_archive" validate:"omitempty,dive"`
-		Config         string             `json:"config" validate:"required"`
-		Files          map[string]string  `json:"files"`
-		Debug          bool               `json:"debug"`
-		Query          string             `json:"query" validate:"required"`
-		VersionMapping string             `json:"version_mapping"`
+		Archive        *archive.Config   `json:"archive" validate:"omitempty,dive"`
+		Config         string            `json:"config" validate:"required"`
+		Files          map[string]string `json:"files"`
+		Debug          bool              `json:"debug"`
+		Query          string            `json:"query" validate:"required"`
+		VersionMapping string            `json:"version_mapping"`
 	}
 
 	// Version describes versions managed by a resource
@@ -76,14 +73,12 @@ func (v *Version) UnmarshalJSON(b []byte) error {
 // =============================================================================
 
 // Resource implements a steampipe concourse resource
-type Resource struct {
-	archive oldarchive.Archive
-}
+type Resource struct{}
 
 // Archive implements optional method to enable resource version archiving
 func (r *Resource) Archive(ctx context.Context, s *Source) (archive.Archive, error) {
-	if s != nil && s.NewArchive != nil {
-		return archive.New(ctx, *s.NewArchive)
+	if s != nil && s.Archive != nil {
+		return archive.New(ctx, *s.Archive)
 	}
 	return nil, nil
 }
@@ -92,42 +87,13 @@ func (r *Resource) Archive(ctx context.Context, s *Source) (archive.Archive, err
 func (r *Resource) Initialize(ctx context.Context, s *Source) (err error) {
 	color.NoColor = false
 	color.Output = sdk.StdErrFromContext(ctx)
-
-	archiveCfg := s.Archive
-	if archiveCfg == nil {
-		archiveCfg = &oldarchive.Config{}
-	}
-
-	if s.Debug {
-		archiveCfg.Debug = true
-	}
-
-	r.archive, err = oldarchive.New(ctx, archiveCfg)
-	if err != nil {
-		return fmt.Errorf("error initializing archive: %v", err)
-	}
-
 	return nil
 }
 
 // Check for new versions
 func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions []Version, err error) {
-	// build version history as best effort
 	if v != nil {
 		versions = append(versions, *v)
-	} else {
-		history, err := r.archive.History(ctx)
-		if err != nil {
-			color.Red("error retrieving resource history: %v", err)
-		}
-
-		for _, item := range history {
-			artifact := Version{Data: make(map[string]interface{})}
-			if err := json.Unmarshal(item, &artifact.Data); err != nil {
-				return nil, fmt.Errorf("error unmarshalling historic version: %v", err)
-			}
-			versions = append(versions, artifact)
-		}
 	}
 
 	// write steampipe config file
@@ -254,42 +220,8 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 		return versions, nil
 	}
 
-	// if previous version provided, compare against current result
-	next := Version{data}
-	if v != nil {
-		orig, err := v.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("error serializing previous version: %v", err)
-		}
-		nextb, err := next.MarshalJSON()
-		if err != nil {
-			return nil, fmt.Errorf("error serializing next version: %v", err)
-		}
-
-		// if no diff detected, return early
-		diff, msg := jsondiff.Compare(orig, nextb, &jsondiff.Options{})
-		switch diff {
-		case jsondiff.BothArgsAreInvalidJson, jsondiff.FirstArgIsInvalidJson, jsondiff.SecondArgIsInvalidJson:
-			return nil, fmt.Errorf("error diffing versions: %s", diff.String())
-		case jsondiff.NoMatch, jsondiff.SupersetMatch:
-			if s.Debug {
-				color.Yellow("diff detected (%s): %s", diff.String(), msg)
-			}
-		case jsondiff.FullMatch:
-			return versions, nil
-		}
-	}
-
-	if s.Debug {
-		b, _ := next.MarshalJSON()
-		color.Yellow("emitting new version: %s", string(b))
-	}
-
 	// otherwise, append new version
-	versions = append(versions, next)
-	if err := r.archive.Put(ctx, &next); err != nil {
-		color.Red("error recording new version in archive: %v", err)
-	}
+	versions = append(versions, Version{data})
 
 	return versions, nil
 }
