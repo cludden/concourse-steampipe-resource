@@ -1,4 +1,4 @@
-FROM ubuntu
+FROM ubuntu:jammy
 
 ARG TARGETVERSION=v0.15.1
 ARG TARGETOS=linux

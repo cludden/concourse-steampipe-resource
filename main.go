@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-	sdk.Main(&Resource{})
+	sdk.Main[Source, Version, GetParams, PutParams](&Resource{})
 }
 
 // =============================================================================
@@ -73,10 +73,12 @@ func (v *Version) UnmarshalJSON(b []byte) error {
 // =============================================================================
 
 // Resource implements a steampipe concourse resource
-type Resource struct{}
+type Resource struct {
+	sdk.BaseResource[Source, Version, GetParams, PutParams]
+}
 
 // Archive implements optional method to enable resource version archiving
-func (r *Resource) Archive(ctx context.Context, s *Source) (archive.Archive, error) {
+func (r *Resource) Archive(ctx context.Context, s *Source) (sdk.Archive, error) {
 	if s != nil && s.Archive != nil {
 		return archive.New(ctx, *s.Archive)
 	}
@@ -227,20 +229,20 @@ func (r *Resource) Check(ctx context.Context, s *Source, v *Version) (versions [
 }
 
 // In serialzies version as JSON and writes it the local filesystem
-func (r *Resource) In(ctx context.Context, s *Source, v *Version, dir string, p *GetParams) (*Version, []sdk.Metadata, error) {
+func (r *Resource) In(ctx context.Context, s *Source, v *Version, dir string, p *GetParams) ([]sdk.Metadata, error) {
 	// write version.json
 	vb, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return nil, nil, fmt.Errorf("error serializing version json: %v", err)
+		return nil, fmt.Errorf("error serializing version json: %v", err)
 	}
 	if err := ioutil.WriteFile(path.Join(dir, "version.json"), vb, 0777); err != nil {
-		return nil, nil, fmt.Errorf("error writing version.json: %v", err)
+		return nil, fmt.Errorf("error writing version.json: %v", err)
 	}
 
-	return v, nil, nil
+	return nil, nil
 }
 
 // Out is required but not implemented, and will error if invoked
-func (r *Resource) Out(ctx context.Context, s *Source, dir string, p *PutParams) (*Version, []sdk.Metadata, error) {
-	return nil, nil, fmt.Errorf("not implemented")
+func (r *Resource) Out(ctx context.Context, s *Source, dir string, p *PutParams) (Version, []sdk.Metadata, error) {
+	return Version{}, nil, fmt.Errorf("not implemented")
 }
